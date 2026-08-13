@@ -156,7 +156,8 @@ class OAuthService:
         if not user:
             user = User(
                 email=email,
-                hashed_password=get_password_hash(uuid.uuid4().hex[:32]),
+                hashed_password=get_password_hash(uuid.uuid4().hex[:16]),
+
 
                 first_name=first_name,
                 last_name=last_name if last_name else "User",
