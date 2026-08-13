@@ -55,11 +55,15 @@ class OAuthService:
 
         cfg = OAuthService.PROVIDER_CONFIGS[prov]
         client_id = cfg["client_id"]() or "mock_client_id"
-        redirect_uri = f"{settings.OAUTH_REDIRECT_BASE_URL}?provider={prov}"
+        base_url = (settings.OAUTH_REDIRECT_BASE_URL or "").strip()
+        if "=" in base_url and not base_url.startswith("http"):
+            base_url = base_url.split("=", 1)[-1].strip()
+        redirect_uri = f"{base_url}?provider={prov}"
         scope = "%20".join(cfg["scopes"])
         state = f"{prov}:{role.upper()}"
 
         return f"{cfg['auth_url']}?client_id={client_id}&redirect_uri={urllib.parse.quote(redirect_uri, safe='')}&response_type=code&scope={scope}&state={state}&access_type=offline&prompt=consent"
+
 
     @staticmethod
     def process_oauth_login(
@@ -95,8 +99,11 @@ class OAuthService:
             last_name = "User"
         else:
             try:
-                client_secret_val = cfg["client_secret"]()
-                redirect_uri = f"{settings.OAUTH_REDIRECT_BASE_URL}?provider={prov}"
+                base_url = (settings.OAUTH_REDIRECT_BASE_URL or "").strip()
+                if "=" in base_url and not base_url.startswith("http"):
+                    base_url = base_url.split("=", 1)[-1].strip()
+                redirect_uri = f"{base_url}?provider={prov}"
+
 
                 # 1. Exchange code for access_token
                 token_params = {
