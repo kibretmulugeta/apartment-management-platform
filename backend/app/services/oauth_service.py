@@ -166,11 +166,15 @@ class OAuthService:
             db.flush()
 
             # Attach role
-            role = db.query(Role).filter(Role.name == default_role.upper()).first()
+            target_role_name = default_role.upper()
+            role = db.query(Role).filter(Role.name == target_role_name).first()
             if not role:
-                role = db.query(Role).filter(Role.name == "TENANT").first()
+                role = Role(name=target_role_name, description=f"{target_role_name.capitalize()} Account Role")
+                db.add(role)
+                db.flush()
             if role and role not in user.roles:
                 user.roles.append(role)
+
 
             # Attach organization
             default_org = db.query(Organization).first()

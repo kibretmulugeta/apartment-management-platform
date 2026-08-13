@@ -119,20 +119,27 @@ def oauth_callback(
 ):
     """Handles OAuth callback, provisions/authenticates user, and issues JWT tokens."""
     from app.services.oauth_service import OAuthService
-    user, access_token, refresh_token = OAuthService.process_oauth_login(
-        provider=provider,
-        code=code,
-        db=db,
-        default_role=role,
-        state=state
-    )
+    try:
+        user, access_token, refresh_token = OAuthService.process_oauth_login(
+            provider=provider,
+            code=code,
+            db=db,
+            default_role=role,
+            state=state
+        )
 
-    user_resp = UserResponse.model_validate(user)
-    token_resp = TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_type="bearer",
-        expires_in=3600,
-        user=user_resp
-    )
-    return APIResponse(success=True, message=f"Authenticated via {provider.capitalize()} OAuth", data=token_resp)
+        user_resp = UserResponse.model_validate(user)
+        token_resp = TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type="bearer",
+            expires_in=3600,
+            user=user_resp
+        )
+        return APIResponse(success=True, message=f"Authenticated via {provider.capitalize()} OAuth", data=token_resp)
+    except Exception as e:
+        db.rollback()
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=400, detail=f"OAuth verification error: {str(e)}")
+
