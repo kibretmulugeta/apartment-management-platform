@@ -22,7 +22,11 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:8000",
+        "https://apartment-management-platform-eight.vercel.app",
+        "https://apartment-management-platform-ofnz.vercel.app",
+        "https://apartment-management-platform.vercel.app",
     ]
+
 
     # Database
     DATABASE_URL: str = "sqlite:///./apparent.db"
