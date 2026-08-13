@@ -9,10 +9,11 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__trunca
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     if not plain_password or not hashed_password:
         return False
-    return pwd_context.verify(plain_password[:72], hashed_password)
+    return pwd_context.verify(plain_password[:50], hashed_password)
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash((password or "")[:72])
+    return pwd_context.hash((password or "default_pass")[:50])
+
 
 
 
