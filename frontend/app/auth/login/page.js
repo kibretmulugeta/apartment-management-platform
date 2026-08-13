@@ -39,11 +39,22 @@ export default function LoginPage() {
 
   const handleOAuthLogin = (provider) => {
     setLoading(true);
-    api.get(`/auth/oauth/${provider}/callback?code=mock_${provider}_code`)
+    api.get(`/auth/oauth/${provider}/url`)
       .then(res => {
-        const { access_token, refresh_token, user } = res.data;
-        setAuthTokens(access_token, refresh_token, user);
-        window.location.href = '/portal/tenant';
+        if (res.data?.authorization_url && !res.data.authorization_url.includes('mock_client_id')) {
+          window.location.href = res.data.authorization_url;
+        } else {
+          // Development fallback with mock code if GOOGLE_CLIENT_ID is not configured yet
+          return api.get(`/auth/oauth/${provider}/callback?code=mock_${provider}_code`).then(cbRes => {
+            const { access_token, refresh_token, user } = cbRes.data;
+            setAuthTokens(access_token, refresh_token, user);
+            const roles = user.roles?.map(r => r.name) || [];
+            if (roles.includes('ADMIN')) window.location.href = '/admin';
+            else if (roles.includes('LANDLORD') || roles.includes('PROPERTY_MANAGER')) window.location.href = '/portal/landlord';
+            else if (roles.includes('MAINTENANCE_STAFF')) window.location.href = '/portal/maintenance';
+            else window.location.href = '/portal/tenant';
+          });
+        }
       })
       .catch(err => setError(err.message || 'OAuth authentication failed'))
       .finally(() => setLoading(false));

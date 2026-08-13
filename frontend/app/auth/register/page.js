@@ -32,11 +32,21 @@ export default function RegisterPage() {
 
   const handleOAuthRegister = (provider) => {
     setLoading(true);
-    api.get(`/auth/oauth/${provider}/callback?code=mock_${provider}_code&role=${form.role_name}`)
+    api.get(`/auth/oauth/${provider}/url?role=${form.role_name}`)
       .then(res => {
-        const { access_token, refresh_token, user } = res.data;
-        setAuthTokens(access_token, refresh_token, user);
-        window.location.href = form.role_name === 'LANDLORD' ? '/portal/landlord' : '/portal/tenant';
+        if (res.data?.authorization_url && !res.data.authorization_url.includes('mock_client_id')) {
+          window.location.href = res.data.authorization_url;
+        } else {
+          return api.get(`/auth/oauth/${provider}/callback?code=mock_${provider}_code&role=${form.role_name}`).then(cbRes => {
+            const { access_token, refresh_token, user } = cbRes.data;
+            setAuthTokens(access_token, refresh_token, user);
+            const roles = user.roles?.map(r => r.name) || [];
+            if (roles.includes('ADMIN')) window.location.href = '/admin';
+            else if (roles.includes('LANDLORD') || roles.includes('PROPERTY_MANAGER')) window.location.href = '/portal/landlord';
+            else if (roles.includes('MAINTENANCE_STAFF')) window.location.href = '/portal/maintenance';
+            else window.location.href = '/portal/tenant';
+          });
+        }
       })
       .catch(err => setError(err.message || 'OAuth registration failed'))
       .finally(() => setLoading(false));

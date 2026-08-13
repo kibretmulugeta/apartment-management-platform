@@ -103,17 +103,29 @@ def get_me(current_user: User = Depends(get_current_user)):
     )
 
 @router.get("/oauth/{provider}/url", response_model=APIResponse[dict])
-def get_oauth_url(provider: str):
+def get_oauth_url(provider: str, role: str = "TENANT"):
     """Returns the authorization redirect URL for Google, Microsoft, Facebook, or LinkedIn."""
     from app.services.oauth_service import OAuthService
-    auth_url = OAuthService.get_authorization_url(provider)
+    auth_url = OAuthService.get_authorization_url(provider, role=role)
     return APIResponse(success=True, data={"provider": provider, "authorization_url": auth_url})
 
 @router.get("/oauth/{provider}/callback", response_model=APIResponse[TokenResponse])
-def oauth_callback(provider: str, code: str = "mock_code_123", role: str = "TENANT", db: Session = Depends(get_db)):
+def oauth_callback(
+    provider: str,
+    code: str = "mock_code_123",
+    role: str = "TENANT",
+    state: str = None,
+    db: Session = Depends(get_db)
+):
     """Handles OAuth callback, provisions/authenticates user, and issues JWT tokens."""
     from app.services.oauth_service import OAuthService
-    user, access_token, refresh_token = OAuthService.process_oauth_login(provider, code, db, default_role=role)
+    user, access_token, refresh_token = OAuthService.process_oauth_login(
+        provider=provider,
+        code=code,
+        db=db,
+        default_role=role,
+        state=state
+    )
 
     user_resp = UserResponse.model_validate(user)
     token_resp = TokenResponse(

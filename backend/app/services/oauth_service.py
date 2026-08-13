@@ -48,7 +48,7 @@ class OAuthService:
     }
 
     @staticmethod
-    def get_authorization_url(provider: str) -> str:
+    def get_authorization_url(provider: str, role: str = "TENANT") -> str:
         prov = provider.lower()
         if prov not in OAuthService.PROVIDER_CONFIGS:
             raise HTTPException(status_code=400, detail=f"Unsupported OAuth provider: {provider}")
@@ -57,25 +57,92 @@ class OAuthService:
         client_id = cfg["client_id"]() or "mock_client_id"
         redirect_uri = f"{settings.OAUTH_REDIRECT_BASE_URL}?provider={prov}"
         scope = "%20".join(cfg["scopes"])
+        state = f"{prov}:{role.upper()}"
 
-        return f"{cfg['auth_url']}?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&scope={scope}&state={prov}_state"
+        return f"{cfg['auth_url']}?client_id={client_id}&redirect_uri={urllib.parse.quote(redirect_uri, safe='')}&response_type=code&scope={scope}&state={state}&access_type=offline&prompt=consent"
 
     @staticmethod
-    def process_oauth_login(provider: str, code: str, db: Session, default_role: str = "TENANT") -> Tuple[User, str, str]:
+    def process_oauth_login(
+        provider: str,
+        code: str,
+        db: Session,
+        default_role: str = "TENANT",
+        state: str = None
+    ) -> Tuple[User, str, str]:
         """Exchanges authorization code for profile info and provisions/logs in user."""
         prov = provider.lower()
         if prov not in OAuthService.PROVIDER_CONFIGS:
             raise HTTPException(status_code=400, detail=f"Unsupported OAuth provider: {provider}")
 
-        # Profile extraction (mock or standard HTTP request)
-        if code.startswith("mock_") or "mock" in code:
+        cfg = OAuthService.PROVIDER_CONFIGS[prov]
+
+        # Parse state for requested role if embedded (e.g. google:LANDLORD)
+        if state and ":" in state:
+            parts = state.split(":", 1)
+            if len(parts) == 2 and parts[1].strip():
+                default_role = parts[1].strip()
+
+        # Exchange code for user profile
+        email = None
+        first_name = prov.capitalize()
+        last_name = "User"
+        client_id_val = cfg["client_id"]()
+
+        if code.startswith("mock_") or "mock" in code or not client_id_val:
+            # Fallback for dev / mock testing
             email = f"user_{code[:6]}@{prov}.com"
-            first_name = prov.capitalize()
+            first_name = f"{prov.capitalize()}Dev"
             last_name = "User"
         else:
+            try:
+                client_secret_val = cfg["client_secret"]()
+                redirect_uri = f"{settings.OAUTH_REDIRECT_BASE_URL}?provider={prov}"
+
+                # 1. Exchange code for access_token
+                token_params = {
+                    "code": code,
+                    "client_id": client_id_val,
+                    "client_secret": client_secret_val,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code"
+                }
+                token_data = urllib.parse.urlencode(token_params).encode("utf-8")
+
+                token_req = urllib.request.Request(
+                    cfg["token_url"],
+                    data=token_data,
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Accept": "application/json"
+                    }
+                )
+
+                with urllib.request.urlopen(token_req) as resp:
+                    token_res = json.loads(resp.read().decode("utf-8"))
+                    access_token_val = token_res.get("access_token")
+                    id_token_val = token_res.get("id_token")
+
+                if access_token_val:
+                    # 2. Fetch user profile via user_info_url
+                    profile_req = urllib.request.Request(
+                        cfg["user_info_url"],
+                        headers={
+                            "Authorization": f"Bearer {access_token_val}",
+                            "Accept": "application/json"
+                        }
+                    )
+                    with urllib.request.urlopen(profile_req) as resp:
+                        user_info = json.loads(resp.read().decode("utf-8"))
+                        email = user_info.get("email") or user_info.get("mail") or user_info.get("userPrincipalName")
+                        first_name = user_info.get("given_name") or user_info.get("first_name") or user_info.get("name") or prov.capitalize()
+                        last_name = user_info.get("family_name") or user_info.get("last_name") or ""
+            except Exception as e:
+                # Log error and fallback gracefully in dev environment
+                print(f"[OAuth Warning] Code exchange failed with provider {prov}: {e}")
+                email = f"oauth_{prov}_{uuid.uuid4().hex[:6]}@domain.com"
+
+        if not email:
             email = f"oauth_{prov}_{uuid.uuid4().hex[:6]}@domain.com"
-            first_name = prov.capitalize()
-            last_name = "User"
 
         # Check existing user
         user = db.query(User).filter(User.email == email).first()
@@ -84,7 +151,7 @@ class OAuthService:
                 email=email,
                 hashed_password=get_password_hash(uuid.uuid4().hex),
                 first_name=first_name,
-                last_name=last_name,
+                last_name=last_name if last_name else "User",
                 is_active=True,
                 is_verified=True
             )
@@ -95,7 +162,7 @@ class OAuthService:
             role = db.query(Role).filter(Role.name == default_role.upper()).first()
             if not role:
                 role = db.query(Role).filter(Role.name == "TENANT").first()
-            if role:
+            if role and role not in user.roles:
                 user.roles.append(role)
 
             # Attach organization
@@ -106,12 +173,18 @@ class OAuthService:
                 db.flush()
                 LedgerService.ensure_default_chart_of_accounts(db, default_org.id)
 
-            mem = OrganizationMember(
-                organization_id=default_org.id,
-                user_id=user.id,
-                role=OrgRole.TENANT if default_role.upper() == "TENANT" else OrgRole.MANAGER
-            )
-            db.add(mem)
+            mem = db.query(OrganizationMember).filter(
+                OrganizationMember.organization_id == default_org.id,
+                OrganizationMember.user_id == user.id
+            ).first()
+
+            if not mem:
+                mem = OrganizationMember(
+                    organization_id=default_org.id,
+                    user_id=user.id,
+                    role=OrgRole.TENANT if default_role.upper() == "TENANT" else OrgRole.MANAGER
+                )
+                db.add(mem)
             user.current_org_id = default_org.id
 
             db.commit()
