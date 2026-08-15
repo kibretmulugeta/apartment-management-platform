@@ -17,6 +17,7 @@ from app.services.ledger_service import LedgerService
 
 def seed_database():
     print("[SEED] Initializing Database Schema & Seeding Initial Data...")
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
 

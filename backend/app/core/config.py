@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
 
     # Database
-    DATABASE_URL: str = "sqlite:///./apparent.db"
+    DATABASE_URL: str = f"sqlite:///{os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'apparent.db')).replace('\\\\', '/')}"
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
