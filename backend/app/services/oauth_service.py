@@ -55,10 +55,10 @@ class OAuthService:
 
         cfg = OAuthService.PROVIDER_CONFIGS[prov]
         client_id = cfg["client_id"]() or "mock_client_id"
-        base_url = (settings.OAUTH_REDIRECT_BASE_URL or "").strip()
+        base_url = (settings.OAUTH_REDIRECT_BASE_URL or "http://localhost:3000/auth/callback").strip()
         if "=" in base_url and not base_url.startswith("http"):
             base_url = base_url.split("=", 1)[-1].strip()
-        redirect_uri = f"{base_url}?provider={prov}"
+        redirect_uri = base_url
         scope = "%20".join(cfg["scopes"])
         state = f"{prov}:{role.upper()}"
 
@@ -91,19 +91,28 @@ class OAuthService:
         first_name = prov.capitalize()
         last_name = "User"
         client_id_val = cfg["client_id"]()
+        client_secret_val = cfg["client_secret"]()
 
-        if code.startswith("mock_") or "mock" in code or not client_id_val:
+        is_mock = (
+            code.startswith("mock_")
+            or "mock" in code
+            or not client_id_val
+            or not client_secret_val
+            or client_secret_val == "your_google_client_secret_here"
+            or client_id_val == "mock_client_id"
+        )
+
+        if is_mock:
             # Fallback for dev / mock testing
-            email = f"user_{code[:6]}@{prov}.com"
+            email = f"user_{code[:6]}@{prov}.com" if len(code) >= 6 else f"user_mock@{prov}.com"
             first_name = f"{prov.capitalize()}Dev"
             last_name = "User"
         else:
             try:
-                base_url = (settings.OAUTH_REDIRECT_BASE_URL or "").strip()
+                base_url = (settings.OAUTH_REDIRECT_BASE_URL or "http://localhost:3000/auth/callback").strip()
                 if "=" in base_url and not base_url.startswith("http"):
                     base_url = base_url.split("=", 1)[-1].strip()
-                redirect_uri = f"{base_url}?provider={prov}"
-
+                redirect_uri = base_url
 
                 # 1. Exchange code for access_token
                 token_params = {
@@ -127,7 +136,6 @@ class OAuthService:
                 with urllib.request.urlopen(token_req) as resp:
                     token_res = json.loads(resp.read().decode("utf-8"))
                     access_token_val = token_res.get("access_token")
-                    id_token_val = token_res.get("id_token")
 
                 if access_token_val:
                     # 2. Fetch user profile via user_info_url
@@ -143,10 +151,13 @@ class OAuthService:
                         email = user_info.get("email") or user_info.get("mail") or user_info.get("userPrincipalName")
                         first_name = user_info.get("given_name") or user_info.get("first_name") or user_info.get("name") or prov.capitalize()
                         last_name = user_info.get("family_name") or user_info.get("last_name") or ""
+            except urllib.error.HTTPError as http_err:
+                err_body = http_err.fp.read().decode("utf-8") if http_err.fp else str(http_err)
+                print(f"[OAuth Error] HTTP error from provider {prov}: {err_body}")
+                raise HTTPException(status_code=400, detail=f"OAuth code exchange failed: {err_body}")
             except Exception as e:
-                # Log error and fallback gracefully in dev environment
-                print(f"[OAuth Warning] Code exchange failed with provider {prov}: {e}")
-                email = f"oauth_{prov}_{uuid.uuid4().hex[:6]}@domain.com"
+                print(f"[OAuth Error] Code exchange failed with provider {prov}: {e}")
+                raise HTTPException(status_code=400, detail=f"OAuth verification error: {str(e)}")
 
         if not email:
             email = f"oauth_{prov}_{uuid.uuid4().hex[:6]}@domain.com"

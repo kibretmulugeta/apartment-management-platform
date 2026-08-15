@@ -12,6 +12,11 @@ from app.core.security import decode_token
 # Ensure database tables exist for tests
 Base.metadata.create_all(bind=engine)
 
+from fastapi.testclient import TestClient
+from app.main import app
+
+client = TestClient(app)
+
 def test_google_oauth_authorization_url():
     """Verify Google OAuth authorization URL structure and state encoding."""
     url = OAuthService.get_authorization_url("google", role="LANDLORD")
@@ -54,11 +59,41 @@ def test_google_oauth_mock_login_and_provisioning():
         assert payload.get("sub") == user.id
         assert payload.get("type") == "access"
 
+        # Re-authenticate existing user to ensure idempotency
+        user_again, token_again, _ = OAuthService.process_oauth_login(
+            provider="google",
+            code=mock_code,
+            db=db,
+            default_role="TENANT",
+            state=state
+        )
+        assert user_again.id == user.id
+
         print(f"\n[OAuth Test] Successfully authenticated user: {user.email} (ID: {user.id}, Role: {role_names})")
     finally:
         db.close()
 
+def test_google_oauth_api_endpoints():
+    """Test OAuth authorization URL endpoint and callback API endpoint via FastAPI TestClient."""
+    # Test GET OAuth URL endpoint
+    resp = client.get("/api/v1/auth/oauth/google/url?role=LANDLORD")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert "authorization_url" in data["data"]
+    assert "https://accounts.google.com/o/oauth2/v2/auth" in data["data"]["authorization_url"]
+
+    # Test GET OAuth Callback endpoint
+    cb_resp = client.get("/api/v1/auth/oauth/google/callback?code=mock_api_test_123&state=google:TENANT")
+    assert cb_resp.status_code == 200
+    cb_data = cb_resp.json()
+    assert cb_data["success"] is True
+    assert "access_token" in cb_data["data"]
+    assert "refresh_token" in cb_data["data"]
+    assert cb_data["data"]["user"]["email"] == "user_mock_a@google.com"
+
 if __name__ == "__main__":
     test_google_oauth_authorization_url()
     test_google_oauth_mock_login_and_provisioning()
+    test_google_oauth_api_endpoints()
     print("\n[SUCCESS] ALL OAUTH TESTS PASSED!")
